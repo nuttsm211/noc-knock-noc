@@ -1,0 +1,6 @@
+*.o
+*.x
+*.vcd
+*.vcd.*
+graph*
+.DS_Store
