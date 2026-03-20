@@ -1,5 +1,6 @@
 #include "systemc.h"
 #include <iostream>
+#include <string>
 #include <stdio.h>
 
 #include "packet.h"
