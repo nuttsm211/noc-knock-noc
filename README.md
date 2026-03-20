@@ -1,2 +1,3 @@
 # noc-knock-noc
-networks.
+networks and chips
+yummy chips
