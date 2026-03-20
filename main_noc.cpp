@@ -8,151 +8,216 @@
 #include "sink.h"
 #include "router.h"
 
+using namespace std;
+
+static const int N = 4;
+static const int NUM_NODES = 16;
+static const int FLITS_PER_SOURCE = 10;
+
 int sc_main(int argc, char *argv[])
 {
-    sc_signal<packet> si_source[2];
-    sc_signal<packet> si_input[2];
-    sc_signal<packet> si_output[2];
-    sc_signal<packet> si_sink[2];
+    sc_uint<2> selected_mode = 0; // 0 = uniform, 1 = neighbouring
 
-    sc_signal<packet> si_zero[12];
+    if (argc > 1) {
+        string mode = argv[1];
+        if (mode == "neighbour" || mode == "neighbor" || mode == "n") {
+            selected_mode = 1;
+        } else {
+            selected_mode = 0;
+        }
+    }
 
-    sc_signal<bool> si_ack_src[2], si_ack_ou[2];
-    sc_signal<bool> si_ack_sink[2], si_ack_in[2];
-    sc_signal<bool> si_ack_zero[12];
-
-    sc_signal<sc_uint<4> > id0, id1;
-
-    // required interim condition: source clock = router clock
     sc_clock s_clock("S_CLOCK", 5, SC_NS, 0.5, 0.0, SC_NS);
     sc_clock r_clock("R_CLOCK", 5, SC_NS, 0.5, 0.0, SC_NS);
     sc_clock d_clock("D_CLOCK", 5, SC_NS, 0.5, 0.0, SC_NS);
 
-    source source0("source0");
-    source0.packet_out(si_source[0]);
-    source0.source_id(id0);
-    source0.ach_in(si_ack_src[0]);
-    source0.CLK(s_clock);
+    sc_signal<sc_uint<4> > node_id[NUM_NODES];
+    sc_signal<sc_uint<2> > traffic_mode_sig;
 
-    source source1("source1");
-    source1.packet_out(si_source[1]);
-    source1.source_id(id1);
-    source1.ach_in(si_ack_src[1]);
-    source1.CLK(s_clock);
+    sc_signal<packet> local_src_pkt[NUM_NODES];
+    sc_signal<packet> local_sink_pkt[NUM_NODES];
+    sc_signal<bool>   local_src_ack[NUM_NODES];
+    sc_signal<bool>   local_sink_ack[NUM_NODES];
 
-    // controlled finite traffic for cleaner interim results
-    source0.max_flits_to_send = 20; // 4 packets
-    source1.max_flits_to_send = 20; // 4 packets
+    // Horizontal links
+    sc_signal<packet> east_pkt[N][N-1];   // (r,c) -> (r,c+1)
+    sc_signal<bool>   east_ack[N][N-1];
 
-    router router0("router0");
-    router0.in0(si_source[0]);
-    router0.in1(si_zero[0]);
-    router0.in2(si_input[0]);
-    router0.in3(si_zero[1]);
-    router0.in4(si_zero[2]);
+    sc_signal<packet> west_pkt[N][N-1];   // (r,c+1) -> (r,c)
+    sc_signal<bool>   west_ack[N][N-1];
 
-    router0.router_id(id0);
+    // Vertical links
+    sc_signal<packet> south_pkt[N-1][N];  // (r,c) -> (r+1,c)
+    sc_signal<bool>   south_ack[N-1][N];
 
-    router0.out0(si_sink[0]);
-    router0.out1(si_zero[3]);
-    router0.out2(si_output[0]);
-    router0.out3(si_zero[4]);
-    router0.out4(si_zero[5]);
+    sc_signal<packet> north_pkt[N-1][N];  // (r+1,c) -> (r,c)
+    sc_signal<bool>   north_ack[N-1][N];
 
-    router0.inack0(si_ack_sink[0]);
-    router0.inack1(si_ack_zero[0]);
-    router0.inack2(si_ack_in[0]);
-    router0.inack3(si_ack_zero[1]);
-    router0.inack4(si_ack_zero[2]);
+    // Unique dummy signals for unused boundary ports
+    sc_signal<packet> dummy_pkt[NUM_NODES][5];
+    sc_signal<bool>   dummy_ack[NUM_NODES][5];
 
-    router0.outack0(si_ack_src[0]);
-    router0.outack1(si_ack_zero[3]);
-    router0.outack2(si_ack_ou[0]);
-    router0.outack3(si_ack_zero[4]);
-    router0.outack4(si_ack_zero[5]);
+    source* src[NUM_NODES];
+    sink* snk[NUM_NODES];
+    router* rtr[NUM_NODES];
 
-    router0.rclk(r_clock);
+    for (int i = 0; i < NUM_NODES; i++) {
+        string sname = "source" + to_string(i);
+        string kname = "sink" + to_string(i);
+        string rname = "router" + to_string(i);
 
-    router router1("router1");
-    router1.in0(si_source[1]);
-    router1.in1(si_zero[6]);
-    router1.in2(si_zero[7]);
-    router1.in3(si_zero[8]);
-    router1.in4(si_output[0]);
+        src[i] = new source(sname.c_str());
+        snk[i] = new sink(kname.c_str());
+        rtr[i] = new router(rname.c_str());
+    }
 
-    router1.router_id(id1);
+    for (int r = 0; r < N; r++) {
+        for (int c = 0; c < N; c++) {
+            int idx = r * N + c;
 
-    router1.out0(si_sink[1]);
-    router1.out1(si_zero[9]);
-    router1.out2(si_zero[10]);
-    router1.out3(si_zero[11]);
-    router1.out4(si_input[0]);
+            node_id[idx].write(idx);
 
-    router1.inack0(si_ack_sink[1]);
-    router1.inack1(si_ack_zero[6]);
-    router1.inack2(si_ack_zero[7]);
-    router1.inack3(si_ack_zero[8]);
-    router1.inack4(si_ack_ou[0]);
+            src[idx]->packet_out(local_src_pkt[idx]);
+            src[idx]->source_id(node_id[idx]);
+            src[idx]->traffic_mode(traffic_mode_sig);
+            src[idx]->ach_in(local_src_ack[idx]);
+            src[idx]->CLK(s_clock);
+            src[idx]->max_flits_to_send = FLITS_PER_SOURCE;
 
-    router1.outack0(si_ack_src[1]);
-    router1.outack1(si_ack_zero[9]);
-    router1.outack2(si_ack_zero[10]);
-    router1.outack3(si_ack_zero[11]);
-    router1.outack4(si_ack_in[0]);
+            snk[idx]->packet_in(local_sink_pkt[idx]);
+            snk[idx]->ack_out(local_sink_ack[idx]);
+            snk[idx]->sink_id(node_id[idx]);
+            snk[idx]->sclk(d_clock);
 
-    router1.rclk(r_clock);
+            rtr[idx]->router_id(node_id[idx]);
+            rtr[idx]->rclk(r_clock);
 
-    sink sink0("sink0");
-    sink0.packet_in(si_sink[0]);
-    sink0.ack_out(si_ack_sink[0]);
-    sink0.sink_id(id0);
-    sink0.sclk(d_clock);
+            // Local source/sink
+            rtr[idx]->in0(local_src_pkt[idx]);
+            rtr[idx]->out0(local_sink_pkt[idx]);
+            rtr[idx]->outack0(local_src_ack[idx]);
+            rtr[idx]->inack0(local_sink_ack[idx]);
 
-    sink sink1("sink1");
-    sink1.packet_in(si_sink[1]);
-    sink1.ack_out(si_ack_sink[1]);
-    sink1.sink_id(id1);
-    sink1.sclk(d_clock);
+            // North side: in1 / out1
+            if (r > 0) {
+                rtr[idx]->in1(south_pkt[r-1][c]);
+                rtr[idx]->inack1(south_ack[r-1][c]);
+            } else {
+                rtr[idx]->in1(dummy_pkt[idx][1]);
+                rtr[idx]->inack1(dummy_ack[idx][1]);
+            }
+
+            if (r < N - 1) {
+                rtr[idx]->out3(south_pkt[r][c]);
+                rtr[idx]->outack3(south_ack[r][c]);
+            } else {
+                rtr[idx]->out3(dummy_pkt[idx][3]);
+                rtr[idx]->outack3(dummy_ack[idx][3]);
+            }
+
+            // South side: in3 / out3 receives from south neighbor via north_pkt
+            if (r < N - 1) {
+                rtr[idx]->in3(north_pkt[r][c]);
+                rtr[idx]->inack3(north_ack[r][c]);
+            } else {
+                rtr[idx]->in3(dummy_pkt[idx][4]);
+                rtr[idx]->inack3(dummy_ack[idx][4]);
+            }
+
+            if (r > 0) {
+                rtr[idx]->out1(north_pkt[r-1][c]);
+                rtr[idx]->outack1(north_ack[r-1][c]);
+            } else {
+                rtr[idx]->out1(dummy_pkt[idx][0]);
+                rtr[idx]->outack1(dummy_ack[idx][0]);
+            }
+
+            // East side: in2 gets packets from east neighbor travelling west
+            if (c < N - 1) {
+                rtr[idx]->in2(west_pkt[r][c]);
+                rtr[idx]->inack2(west_ack[r][c]);
+            } else {
+                rtr[idx]->in2(dummy_pkt[idx][2]);
+                rtr[idx]->inack2(dummy_ack[idx][2]);
+            }
+
+            if (c < N - 1) {
+                rtr[idx]->out2(east_pkt[r][c]);
+                rtr[idx]->outack2(east_ack[r][c]);
+            } else {
+                rtr[idx]->out2(dummy_pkt[idx][2]);
+                rtr[idx]->outack2(dummy_ack[idx][2]);
+            }
+
+            // West side: in4 gets packets from west neighbor travelling east
+            if (c > 0) {
+                rtr[idx]->in4(east_pkt[r][c-1]);
+                rtr[idx]->inack4(east_ack[r][c-1]);
+            } else {
+                rtr[idx]->in4(dummy_pkt[idx][3]);
+                rtr[idx]->inack4(dummy_ack[idx][3]);
+            }
+
+            if (c > 0) {
+                rtr[idx]->out4(west_pkt[r][c-1]);
+                rtr[idx]->outack4(west_ack[r][c-1]);
+            } else {
+                rtr[idx]->out4(dummy_pkt[idx][4]);
+                rtr[idx]->outack4(dummy_ack[idx][4]);
+            }
+        }
+    }
+
+    traffic_mode_sig.write(selected_mode);
 
     sc_trace_file *tf = sc_create_vcd_trace_file("graph");
 
     sc_trace(tf, s_clock, "s_clock");
     sc_trace(tf, r_clock, "r_clock");
     sc_trace(tf, d_clock, "d_clock");
+    sc_trace(tf, traffic_mode_sig, "traffic_mode");
 
-    sc_trace(tf, si_source[0], "si_source0");
-    sc_trace(tf, si_source[1], "si_source1");
-    sc_trace(tf, si_sink[0], "si_sink0");
-    sc_trace(tf, si_sink[1], "si_sink1");
-    sc_trace(tf, si_output[0], "si_output0_r0_to_r1");
-    sc_trace(tf, si_input[0], "si_input0_r1_to_r0");
-
-    sc_trace(tf, si_ack_src[0], "si_ack_src0");
-    sc_trace(tf, si_ack_src[1], "si_ack_src1");
-    sc_trace(tf, si_ack_sink[0], "si_ack_sink0");
-    sc_trace(tf, si_ack_sink[1], "si_ack_sink1");
-
-    id0.write(0);
-    id1.write(1);
+    for (int i = 0; i < NUM_NODES; i++) {
+        sc_trace(tf, local_src_pkt[i], "src_pkt_" + to_string(i));
+        sc_trace(tf, local_sink_pkt[i], "sink_pkt_" + to_string(i));
+        sc_trace(tf, local_src_ack[i], "src_ack_" + to_string(i));
+        sc_trace(tf, local_sink_ack[i], "sink_ack_" + to_string(i));
+    }
 
     cout << endl;
     cout << "-------------------------------------------------------------------------------" << endl;
-    cout << "1x2 mesh NoC simulator containing 2 routers" << endl;
+    cout << "4x4 mesh NoC simulator containing 16 routers" << endl;
     cout << "-------------------------------------------------------------------------------" << endl;
-    cout << "Source clock = router clock = sink clock = 5 ns" << endl;
-    cout << "Controlled traffic: each source sends 20 flits" << endl;
+    cout << "Traffic mode: " << (selected_mode == 0 ? "uniform" : "neighbouring") << endl;
+    cout << "Each source sends " << FLITS_PER_SOURCE << " flits" << endl;
     cout << "Press Return to start simulation..." << endl;
     getchar();
 
-    // run long enough to inject and drain all traffic
-    sc_start(2000, SC_NS);
+    const int total_target_flits = NUM_NODES * FLITS_PER_SOURCE;
+    int total_recv = 0;
+    int safety_steps = 0;
+
+    while (total_recv < total_target_flits && safety_steps < 5000) {
+        sc_start(100, SC_NS);
+        total_recv = 0;
+        for (int i = 0; i < NUM_NODES; i++) {
+            total_recv += snk[i]->pkt_recv;
+        }
+        safety_steps++;
+    }
 
     sc_close_vcd_trace_file(tf);
 
-    int total_sent = source0.pkt_snt + source1.pkt_snt;
-    int total_recv = sink0.pkt_recv + sink1.pkt_recv;
+    int total_sent = 0;
+    total_recv = 0;
+    double total_delay = 0.0;
 
-    double total_delay = sink0.total_delay_ns + sink1.total_delay_ns;
+    for (int i = 0; i < NUM_NODES; i++) {
+        total_sent += src[i]->pkt_snt;
+        total_recv += snk[i]->pkt_recv;
+        total_delay += snk[i]->total_delay_ns;
+    }
+
     double avg_delay = 0.0;
     if (total_recv > 0) {
         avg_delay = total_delay / (double)total_recv;
@@ -160,7 +225,7 @@ int sc_main(int argc, char *argv[])
 
     cout << endl;
     cout << "-------------------------------------------------------------------------------" << endl;
-    cout << "End of NoC simulation" << endl;
+    cout << "End of 4x4 mesh NoC simulation" << endl;
     cout << "Total flits sent: " << total_sent << endl;
     cout << "Total flits received: " << total_recv << endl;
     cout << "Average flit delay (ns): " << avg_delay << endl;

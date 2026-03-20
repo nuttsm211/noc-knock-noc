@@ -1,5 +1,25 @@
 #include "source.h"
 
+static sc_uint<4> choose_destination(sc_uint<4> sid, sc_uint<2> mode)
+{
+    sc_uint<4> dest = 0;
+
+    if (mode == 0) {
+        // Uniform pattern:
+        // a one-to-one permutation across 16 nodes
+        // no node sends to itself, no sink receives from more than one source
+        dest = (sid + 5) % 16;
+    } else {
+        // Neighbouring pattern:
+        // pairwise horizontal neighbours in each row
+        // 0<->1, 2<->3, 4<->5, 6<->7, ...
+        // one-hop neighbours, one-to-one mapping
+        dest = sid ^ 1;
+    }
+
+    return dest;
+}
+
 void source::func()
 {
     packet v_packet_out;
@@ -14,35 +34,25 @@ void source::func()
     {
         wait();
 
-        // stop injecting once the desired number of flits is reached
         if (pkt_snt >= max_flits_to_send) {
             continue;
         }
 
-        // only inject when upstream router says input FIFO is not full
         if (!ach_in.read())
         {
             sc_uint<4> sid = source_id.read();
+            sc_uint<4> dest = choose_destination(sid, traffic_mode.read());
 
             v_packet_out.data = v_packet_out.data + sid + 1;
             v_packet_out.id = sid;
-
-            // 1x2 clean traffic pattern:
-            // source 0 -> sink 1
-            // source 1 -> sink 0
-            if (sid == 0)
-                v_packet_out.dest = 1;
-            else
-                v_packet_out.dest = 0;
-
+            v_packet_out.dest = dest;
             v_packet_out.pkt_clk = ~v_packet_out.pkt_clk;
             v_packet_out.h_t = 0;
 
             pkt_snt++;
-
-            // packet size = 5 flits, last flit is tail
-            if ((pkt_snt % 5) == 0)
+            if ((pkt_snt % 5) == 0) {
                 v_packet_out.h_t = 1;
+            }
 
             v_packet_out.send_time = (sc_uint<32>) sc_time_stamp().to_double();
             total_send_time_ns += sc_time_stamp().to_double();
