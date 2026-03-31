@@ -3,20 +3,23 @@
 static sc_uint<4> choose_destination(sc_uint<4> sid, sc_uint<2> mode)
 {
     sc_uint<4> dest = 0;
-
     if (mode == 0) {
-        // Uniform pattern:
-        // a one-to-one permutation across 16 nodes
-        // no node sends to itself, no sink receives from more than one source
+        // uniform permutation (original)
         dest = (sid + 5) % 16;
-    } else {
-        // Neighbouring pattern:
-        // pairwise horizontal neighbours in each row
-        // 0<->1, 2<->3, 4<->5, 6<->7, ...
-        // one-hop neighbours, one-to-one mapping
+    } else if (mode == 1) {
+        // neighbouring (original)
         dest = sid ^ 1;
-    }
-
+   } else {
+    // wrap-exploit: dest is 3 hops direct but 1 hop via wrap
+    // node at (row, col) -> same row, (col + 3) % 4
+    // direct = 3 hops east, wrap = 1 hop west
+    // wrap-aware routing picks west wrap = 1 hop
+    // conservative XY picks east direct = 3 hops
+        int row = (int)sid / 4;
+        int col = (int)sid % 4;
+        int dcol = (col + 3) % 4;
+        dest = (sc_uint<4>)(row * 4 + dcol);
+   }
     return dest;
 }
 
@@ -48,7 +51,7 @@ void source::func()
             v_packet_out.dest = dest;
             v_packet_out.pkt_clk = ~v_packet_out.pkt_clk;
             v_packet_out.h_t = 0;
-
+//each got them 5 flits jit HBT time
             pkt_snt++;
             if ((pkt_snt % 5) == 0) {
                 v_packet_out.h_t = 1;
