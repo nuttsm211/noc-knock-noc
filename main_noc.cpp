@@ -22,6 +22,8 @@ int sc_main(int argc, char *argv[])
         string mode = argv[1];
         if (mode == "neighbour" || mode == "neighbor" || mode == "n") {
             selected_mode = 1;
+        } else if (mode == "wrap" || mode == "w") {
+            selected_mode = 2;
         } else {
             selected_mode = 0;
         }
@@ -39,23 +41,19 @@ int sc_main(int argc, char *argv[])
     sc_signal<bool>   local_src_ack[NUM_NODES];
     sc_signal<bool>   local_sink_ack[NUM_NODES];
 
-    // Horizontal links
-    sc_signal<packet> east_pkt[N][N-1];   // (r,c) -> (r,c+1)
-    sc_signal<bool>   east_ack[N][N-1];
+    // Directed torus links
+    // Each array element is owned by exactly one router output.
+    sc_signal<packet> north_pkt[N][N];
+    sc_signal<bool>   north_ack[N][N];
 
-    sc_signal<packet> west_pkt[N][N-1];   // (r,c+1) -> (r,c)
-    sc_signal<bool>   west_ack[N][N-1];
+    sc_signal<packet> east_pkt[N][N];
+    sc_signal<bool>   east_ack[N][N];
 
-    // Vertical links
-    sc_signal<packet> south_pkt[N-1][N];  // (r,c) -> (r+1,c)
-    sc_signal<bool>   south_ack[N-1][N];
+    sc_signal<packet> south_pkt[N][N];
+    sc_signal<bool>   south_ack[N][N];
 
-    sc_signal<packet> north_pkt[N-1][N];  // (r+1,c) -> (r,c)
-    sc_signal<bool>   north_ack[N-1][N];
-
-    // Unique dummy signals for unused boundary ports
-    sc_signal<packet> dummy_pkt[NUM_NODES][5];
-    sc_signal<bool>   dummy_ack[NUM_NODES][5];
+    sc_signal<packet> west_pkt[N][N];
+    sc_signal<bool>   west_ack[N][N];
 
     source* src[NUM_NODES];
     sink* snk[NUM_NODES];
@@ -75,8 +73,14 @@ int sc_main(int argc, char *argv[])
         for (int c = 0; c < N; c++) {
             int idx = r * N + c;
 
+            int north_r = (r - 1 + N) % N;
+            int south_r = (r + 1) % N;
+            int west_c  = (c - 1 + N) % N;
+            int east_c  = (c + 1) % N;
+
             node_id[idx].write(idx);
 
+            // Source
             src[idx]->packet_out(local_src_pkt[idx]);
             src[idx]->source_id(node_id[idx]);
             src[idx]->traffic_mode(traffic_mode_sig);
@@ -84,87 +88,63 @@ int sc_main(int argc, char *argv[])
             src[idx]->CLK(s_clock);
             src[idx]->max_flits_to_send = FLITS_PER_SOURCE;
 
+            // Sink
             snk[idx]->packet_in(local_sink_pkt[idx]);
             snk[idx]->ack_out(local_sink_ack[idx]);
             snk[idx]->sink_id(node_id[idx]);
             snk[idx]->sclk(d_clock);
 
+            // Router basic ports
             rtr[idx]->router_id(node_id[idx]);
             rtr[idx]->rclk(r_clock);
 
-            // Local source/sink
+            // Local port
             rtr[idx]->in0(local_src_pkt[idx]);
             rtr[idx]->out0(local_sink_pkt[idx]);
             rtr[idx]->outack0(local_src_ack[idx]);
             rtr[idx]->inack0(local_sink_ack[idx]);
 
-            // North side: in1 / out1
-            if (r > 0) {
-                rtr[idx]->in1(south_pkt[r-1][c]);
-                rtr[idx]->inack1(south_ack[r-1][c]);
-            } else {
-                rtr[idx]->in1(dummy_pkt[idx][1]);
-                rtr[idx]->inack1(dummy_ack[idx][1]);
-            }
+            // NORTH input:
+            // packet comes from north neighbor's SOUTH output
+            rtr[idx]->in1(south_pkt[north_r][c]);
+            // ack goes back to north neighbor for that south-directed link
+            rtr[idx]->outack1(south_ack[north_r][c]);
 
-            if (r < N - 1) {
-                rtr[idx]->out3(south_pkt[r][c]);
-                rtr[idx]->outack3(south_ack[r][c]);
-            } else {
-                rtr[idx]->out3(dummy_pkt[idx][3]);
-                rtr[idx]->outack3(dummy_ack[idx][3]);
-            }
+            // EAST input:
+            // packet comes from east neighbor's WEST output
+            rtr[idx]->in2(west_pkt[r][east_c]);
+            // ack goes back to east neighbor for that west-directed link
+            rtr[idx]->outack2(west_ack[r][east_c]);
 
-            // South side: in3 / out3 receives from south neighbor via north_pkt
-            if (r < N - 1) {
-                rtr[idx]->in3(north_pkt[r][c]);
-                rtr[idx]->inack3(north_ack[r][c]);
-            } else {
-                rtr[idx]->in3(dummy_pkt[idx][4]);
-                rtr[idx]->inack3(dummy_ack[idx][4]);
-            }
+            // SOUTH input:
+            // packet comes from south neighbor's NORTH output
+            rtr[idx]->in3(north_pkt[south_r][c]);
+            // ack goes back to south neighbor for that north-directed link
+            rtr[idx]->outack3(north_ack[south_r][c]);
 
-            if (r > 0) {
-                rtr[idx]->out1(north_pkt[r-1][c]);
-                rtr[idx]->outack1(north_ack[r-1][c]);
-            } else {
-                rtr[idx]->out1(dummy_pkt[idx][0]);
-                rtr[idx]->outack1(dummy_ack[idx][0]);
-            }
+            // WEST input:
+            // packet comes from west neighbor's EAST output
+            rtr[idx]->in4(east_pkt[r][west_c]);
+            // ack goes back to west neighbor for that east-directed link
+            rtr[idx]->outack4(east_ack[r][west_c]);
 
-            // East side: in2 gets packets from east neighbor travelling west
-            if (c < N - 1) {
-                rtr[idx]->in2(west_pkt[r][c]);
-                rtr[idx]->inack2(west_ack[r][c]);
-            } else {
-                rtr[idx]->in2(dummy_pkt[idx][2]);
-                rtr[idx]->inack2(dummy_ack[idx][2]);
-            }
+            // NORTH output:
+            // this router drives its own north-directed link
+            rtr[idx]->out1(north_pkt[r][c]);
+            // downstream availability for north output
+            rtr[idx]->inack1(north_ack[r][c]);
 
-            if (c < N - 1) {
-                rtr[idx]->out2(east_pkt[r][c]);
-                rtr[idx]->outack2(east_ack[r][c]);
-            } else {
-                rtr[idx]->out2(dummy_pkt[idx][2]);
-                rtr[idx]->outack2(dummy_ack[idx][2]);
-            }
+            // EAST output:
+            rtr[idx]->out2(east_pkt[r][c]);
+            rtr[idx]->inack2(east_ack[r][c]);
 
-            // West side: in4 gets packets from west neighbor travelling east
-            if (c > 0) {
-                rtr[idx]->in4(east_pkt[r][c-1]);
-                rtr[idx]->inack4(east_ack[r][c-1]);
-            } else {
-                rtr[idx]->in4(dummy_pkt[idx][3]);
-                rtr[idx]->inack4(dummy_ack[idx][3]);
-            }
+            // SOUTH output:
+            rtr[idx]->out3(south_pkt[r][c]);
+            rtr[idx]->inack3(south_ack[r][c]);
 
-            if (c > 0) {
-                rtr[idx]->out4(west_pkt[r][c-1]);
-                rtr[idx]->outack4(west_ack[r][c-1]);
-            } else {
-                rtr[idx]->out4(dummy_pkt[idx][4]);
-                rtr[idx]->outack4(dummy_ack[idx][4]);
-            }
+            // WEST output:
+            rtr[idx]->out4(west_pkt[r][c]);
+            rtr[idx]->inack4(west_ack[r][c]);
         }
     }
 
@@ -186,9 +166,13 @@ int sc_main(int argc, char *argv[])
 
     cout << endl;
     cout << "-------------------------------------------------------------------------------" << endl;
-    cout << "4x4 mesh NoC simulator containing 16 routers" << endl;
+    cout << "4x4 torus NoC simulator containing 16 routers" << endl;
     cout << "-------------------------------------------------------------------------------" << endl;
-    cout << "Traffic mode: " << (selected_mode == 0 ? "uniform" : "neighbouring") << endl;
+    cout << "Traffic mode: ";
+        if      (selected_mode == 0) cout << "uniform";
+        else if (selected_mode == 1) cout << "neighbouring";
+        else                         cout << "wrap-stress (diagonal)";
+    cout << endl;
     cout << "Each source sends " << FLITS_PER_SOURCE << " flits" << endl;
     cout << "Press Return to start simulation..." << endl;
     getchar();
@@ -225,7 +209,7 @@ int sc_main(int argc, char *argv[])
 
     cout << endl;
     cout << "-------------------------------------------------------------------------------" << endl;
-    cout << "End of 4x4 mesh NoC simulation" << endl;
+    cout << "End of 4x4 torus NoC simulation" << endl;
     cout << "Total flits sent: " << total_sent << endl;
     cout << "Total flits received: " << total_recv << endl;
     cout << "Average flit delay (ns): " << avg_delay << endl;
