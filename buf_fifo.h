@@ -42,6 +42,7 @@ public:
             registers[i].h_t = 0;
             registers[i].send_time = 0;
         }
+        
     }
 
     void packet_in(const packet& data_packet);
