@@ -4,3 +4,5 @@
 *.vcd.*
 graph*
 .DS_Store
+*.txt
+*.tex
