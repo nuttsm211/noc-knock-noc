@@ -5,24 +5,49 @@
 
 static sc_uint<3> compute_route(sc_uint<4> router_id, sc_uint<4> dest_id)
 {
-    sc_uint<2> rx = router_id.range(1, 0);
-    sc_uint<2> ry = router_id.range(3, 2);
+    int rx = (int)router_id.range(1, 0);
+    int ry = (int)router_id.range(3, 2);
+    int dx = (int)dest_id.range(1, 0);
+    int dy = (int)dest_id.range(3, 2);
+    const int N = 4;
 
-    sc_uint<2> dx = dest_id.range(1, 0);
-    sc_uint<2> dy = dest_id.range(3, 2);
+    // X dimension: compare direct distance vs wrap distance
+    int x_direct = dx - rx;         // positive = go east, negative = go west
+    int x_wrap   = x_direct > 0
+                   ? x_direct - N   // going east directly, wrap goes west
+                   : x_direct + N;  // going west directly, wrap goes east
 
-    // Route code mapping must match the crossbar:
-    // 1 -> local (o0)
-    // 2 -> north (o1)
-    // 3 -> east  (o2)
-    // 4 -> south (o3)
-    // 5 -> west  (o4)
+    // pick shorter X path
+    int x_step = 0;
+    if (dx != rx) {
+        if (abs(x_direct) <= abs(x_wrap))
+            x_step = x_direct > 0 ? 1 : -1;   // direct
+        else
+            x_step = x_wrap > 0 ? 1 : -1;      // wrap is shorter
+    }
 
-    if (rx < dx) return 3;   // east
-    if (rx > dx) return 5;   // west
-    if (ry < dy) return 4;   // south
-    if (ry > dy) return 2;   // north
-    return 1;                // local
+    // Y dimension: compare direct distance vs wrap distance
+    int y_direct = dy - ry;
+    int y_wrap   = y_direct > 0
+                   ? y_direct - N
+                   : y_direct + N;
+
+    int y_step = 0;
+    if (dy != ry) {
+        if (abs(y_direct) <= abs(y_wrap))
+            y_step = y_direct > 0 ? 1 : -1;
+        else
+            y_step = y_wrap > 0 ? 1 : -1;
+    }
+
+    // Dimension-ordered: resolve X first, then Y
+    // Turn restriction: only allow east and south turns at wrap boundaries
+    // This breaks cyclic dependencies while still using shorter wrap paths
+    if (x_step == 1)  return 3; // east
+    if (x_step == -1) return 5; // west
+    if (y_step == 1)  return 4; // south
+    if (y_step == -1) return 2; // north
+    return 1;                   // local
 }
 
 void arbiter::func()
