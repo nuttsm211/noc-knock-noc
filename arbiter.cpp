@@ -25,6 +25,7 @@ static sc_uint<3> compute_route(sc_uint<4> router_id, sc_uint<4> dest_id)
         else
             x_step = x_wrap > 0 ? 1 : -1;      // wrap is shorter
     }
+    
 
     // Y dimension: compare direct distance vs wrap distance
     int y_direct = dy - ry;

@@ -72,7 +72,7 @@ int sc_main(int argc, char *argv[])
     for (int r = 0; r < N; r++) {
         for (int c = 0; c < N; c++) {
             int idx = r * N + c;
-
+            ///timmies wrap!!!!!!
             int north_r = (r - 1 + N) % N;
             int south_r = (r + 1) % N;
             int west_c  = (c - 1 + N) % N;
@@ -98,7 +98,7 @@ int sc_main(int argc, char *argv[])
             rtr[idx]->router_id(node_id[idx]);
             rtr[idx]->rclk(r_clock);
 
-            // Local port
+            // Local port, them wrap connection input
             rtr[idx]->in0(local_src_pkt[idx]);
             rtr[idx]->out0(local_sink_pkt[idx]);
             rtr[idx]->outack0(local_src_ack[idx]);
@@ -174,7 +174,7 @@ int sc_main(int argc, char *argv[])
         else                         cout << "wrap-stress (diagonal)";
     cout << endl;
     cout << "Each source sends " << FLITS_PER_SOURCE << " flits" << endl;
-    cout << "Press Return to start simulation..." << endl;
+    cout << "Return to Start..." << endl;
     getchar();
 
     const int total_target_flits = NUM_NODES * FLITS_PER_SOURCE;
@@ -214,7 +214,7 @@ int sc_main(int argc, char *argv[])
     cout << "Total flits received: " << total_recv << endl;
     cout << "Average flit delay (ns): " << avg_delay << endl;
     cout << "-------------------------------------------------------------------------------" << endl;
-    cout << "Press Return to end the simulation..." << endl;
+    cout << "Return to end..." << endl;
     getchar();
 
     return 0;
