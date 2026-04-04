@@ -1,25 +1,20 @@
-systemc network on chip simulator
+# noc-knock-noc
 
-a simple packet switched noc simulator built in systemc.
-right now it runs a small 1x2 mesh with two routers just to verify routing, buffering and packet movement.
+Upscaled from an earlier NoC version into a 4x4 torus model with wrap-aware routing.
 
-packets are split into flits and move using deterministic xy routing with wormhole style flow control.
-traffic is controlled so both nodes send packets to each other and you can observe timing and delays.
+reduced average flit delay from 50312.5 ns to 32500 ns under wrap-stress traffic, with full delivery of 160 flits.
 
-current features
 
-* fifo input buffering
-* basic arbiter and crossbar switching
-* fixed packet size flits
-* simple latency measurement
-* waveform trace output
 
-goal is to scale this into a larger mesh and experiment with traffic patterns and performance.
 
-build
+# next?
+
+upscale more maybe, depends tbh
+# build
+
+```
+make clean
 make
-
-run
 ./noc.x
-
-requires systemc installed and paths updated in makefile if needed.
+./noc.x wrap
+./noc.x neighbour
